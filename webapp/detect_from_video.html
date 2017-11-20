@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+    <meta name="description" content="This is a demo application try to capture emotion from web camera. It used a pre-trained Keras model, and invoked by keras.js.">
+    <meta name="author" content="Sea Zhang">
+    <title>Emotion Detector - Demo</title>
+    <!-- Bootstrap core CSS -->
+    <link href="../static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="../static/css/custom.css" rel="stylesheet">
+    <link href="../static/css/font-awesome.min.css" rel="stylesheet">
+    <!--<link rel="stylesheet" href="../static/css/style.min.css" />-->
+    <!-- Custom styles for this template -->
+  </head>
+  <body>
+    <nav class="navbar navbar-inverse bg-inverse">
+      <a class="navbar-brand" href="/">
+        <img src="../static/images/sap-logo-svg.png" alt="">
+        &nbsp;&nbsp;Emotion Detection Demo
+      </a>
+    </nav>
+    <div class="container-fluid">
+      <div class="row">
+        <div class="col-sm-3 col-md-3">
+          <div class="list-group">
+            <a class="list-group-item" href="/demo1"><i class="fa fa-picture-o fa-fw text-success" aria-hidden="true"></i>&nbsp;&nbsp;From Upload Image</a>
+            <a class="list-group-item" href="/demo2"><i class="fa fa-camera fa-fw text-success" aria-hidden="true"></i>&nbsp;&nbsp;From Web Camera</a>
+            <a class="list-group-item" href="/demo3"><i class="fa fa-film fa-fw text-success" aria-hidden="true"></i>&nbsp;&nbsp;From Video</a>
+          </div>
+        </div>
+        <div class="col-sm-9 col-md-9">
+          <div class="row">
+            <div class='col-md-6'>
+              <div class="input-group image-preview">
+                <input type="text" class="form-control image-preview-filename" disabled="disabled">
+                <span class="input-group-btn">
+                  <div class="btn btn-default image-preview-input">
+                    <span class="glyphicon glyphicon-folder-open"></span>
+                    <span class="image-preview-input-title">Browse</span>
+                    <input type="file" id="file" name="file" value=""/>
+                  </div>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="row" style="margin-top: 10px; padding-left: 80px;">
+            <video id="video" class="center" width="400" height="300" preload="auto" controls style="background: #000"></video>
+          </div>
+          <div class='row' id="info-zone" style="margin-top: 10px;">
+            <div class="col-md-10" id="info">
+            </div>
+          </div>
+          <div class='hide'>
+            <form method=POST enctype="multipart/form-data" action="/inference_sync" id="imageform" style="display: none;">
+              <input type="file" accept="image/png, image/jpeg, image/gif" id="photo" name="file"/>
+            </form>
+            <canvas id="canvas" width="400" height="300"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  <script src="../static/js/jquery.min.js"></script>
+  <script src="../static/js/bootstrap.min.js"></script>
+  <script>
+    var video = document.getElementById('video');
+    var canvas = $('#canvas')[0];
+    var ctx = canvas.getContext('2d');
+    var sync_instance;
+    var sending = false;
+
+    $(document).ajaxStart(function(){
+      sending = true;
+    });
+
+    function stopSnapshot(){
+      sending = true;
+      clearInterval(sync_instance);
+    }
+
+    function startSnapshot(){
+      sync_instance = setInterval("snapshot()", 100);
+    }
+
+    $(document).ready(function(){
+      $("#video").bind("play", function(){
+        startSnapshot();
+      });
+
+      $("#video").bind("pause", function(){
+        stopSnapshot();
+      });
+
+      $("#video").bind("ended", function(){
+        stopSnapshot();
+      });
+
+    });
+
+    $(function() {
+        $(".image-preview-input input:file").change(function (){
+          //$("#image-prev").removeAttr('src');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          $('#info').empty();
+          var file = this.files[0];
+          var type = file.type;
+          var canPlay = video.canPlayType(type);
+          if(canPlay != ''){
+            var fileURL = URL.createObjectURL(file);
+            video.src = fileURL;
+            video.load();
+          }else{
+            alert("Video format not support.");
+          }
+        });
+    });
+
+      function snapshot() {
+        //request = requestAnimFrame(snapshot);
+         // Draws current image from the video element into the canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        var data_url = canvas.toDataURL('image/png');
+        //data_url.replace(/^data:image\/(png|jpg);base64,/, "");
+        form_data = new FormData($('#imageform')[0]);
+        form_data.append('photo', dataURItoBlob(data_url));
+        detect_time = new Date().toString().match(/\d{2}:\d{2}:\d{2}/)[0];
+        if(! sending){
+          $.ajax({
+            type: 'POST',
+            url: 'inference_sync',
+            data: form_data,
+            cache:false,
+            processData:false,
+            contentType:false,
+            dataType: 'json',
+            success: function(faces){
+              if(faces['Result'] == null)
+                showFaceInfo(faces);
+              sending = false;
+            }
+          });
+        }
+      }
+
+      function showFaceInfo(faces){
+        $('#info').empty();
+        $('#info').append('<div class="row"><span class="h2 pull-left">Detected <small>at</small> <span class="h4" style="color: blue;">' + detect_time + '</span></div>');
+        $.each(faces, function(index){
+          var face = faces[index];
+          showInfo(face, canvas, index);
+        });
+      }
+
+      function showInfo(face, img, index){
+        var info_id = "info-" + index;
+        var canvas_id = "canvas-" + index;
+        var table_id = "detection-" + index;
+        var info = $('#info');
+        infoLayout(info, info_id, canvas_id, table_id);
+        infoCanvas(face, img, canvas_id);
+        infoTable(face, table_id);
+      }
+
+      function infoLayout(info, info_id, canvas_id, table_id){
+        info.append('<div class="row" id="' + info_id + '"></div>');
+        var info_div = $('#' + info_id);
+        info_div.append('<div class="col-md-3"><canvas id="' + canvas_id + '"></canvas></div>');
+        info_div.append('<div class="col-md-6"><table id="' + table_id + '" class="table"></table></div>');
+      }
+
+      function infoCanvas(face, img,  canvas_id){
+        var canvas1 = $('#' + canvas_id)[0];
+        var ctx1 = canvas1.getContext('2d');
+        canvas1.width = face['w'];
+        canvas1.height = face['h'];
+        if(face['w'] > 200 || face['h'] > 200){
+          canvas1.width = 200;
+          canvas1.height = 200;
+        }
+        ctx1.drawImage(img, face['x'], face['y'], face['w'], face['h'], 0, 0, canvas1.width, canvas1.height);
+      }
+
+      function infoTable(face, table_id){
+        var table = $('#' + table_id);
+        innerHTML = '';
+        face = sortByProb(face);
+        $.each(face, function(key, value){
+          if(key != 'x' && key != 'y' && key != 'w' && key != 'h'){
+            prob = value * 100;
+            prob = prob.toFixed(2);
+            innerHTML += "<tr>";
+            innerHTML += '<td class="text-right emotion-text">';
+            innerHTML += key + '</td>';
+            innerHTML += '<td style="width: 200px;"><div class="btn bar ' + renderBar(prob) + '" style="width: ' + prob + '%;"></div></td>';
+            innerHTML += '<td>' + prob + '%</td>';
+            innerHTML += '</tr>';
+          }
+        });
+        table[0].innerHTML = innerHTML;
+      }
+
+      function renderBar(prob){
+        if(prob >= 50){return "btn-success";}
+        if(prob <  50){return "btn-warning";}
+        if(prob <= 10){ return "btn-danger";}
+        return ""
+      }
+
+      function sortByProb(input) {
+        var values = [];
+        $.each(input, function(key, value){
+          values.push(parseFloat(value));
+        });
+        values.sort(function(a, b){
+          return a - b;
+        }).reverse();
+
+        var output = {};
+        for(var i = 0; i < values.length; i++) {
+          key = getKey(input, values[i]);
+          output[key] = values[i];
+        }
+        return output;
+      }
+
+      function getKey(hash, value){
+        var key;
+        for(key in hash){
+          if(hash[key] == value) return key;
+        }
+        return "";
+      }
+
+
+      function dataURItoBlob(dataURI) {
+        var blobBin = atob(dataURI.split(',')[1]);
+        var array = [];
+        for(var i = 0; i < blobBin.length; i++) {
+            array.push(blobBin.charCodeAt(i));
+        }
+        return new Blob([new Uint8Array(array)], {type: 'image/png'});
+      }
+
+  </script>
+</body>
+</html>
